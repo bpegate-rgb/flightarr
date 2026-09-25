@@ -167,8 +167,8 @@
       <table>
         <thead>
           <tr>
-            <th>預定時間</th>
-            <th>最新時間</th>
+            <th>預定時間 (北京時間)</th>
+            <th>最新時間 (北京時間)</th>
             <th>航班編號</th>
             <th>出發地</th>
             <th>橋門 (Gate)</th>
@@ -189,12 +189,25 @@
   <script>
     let rawFlightData = [];
 
-    function getTodayDateStr() {
-      const today = new Date();
-      const yyyy = today.getFullYear();
-      const mm = String(today.getMonth() + 1).padStart(2, '0');
-      const dd = String(today.getDate()).padStart(2, '0');
+    // 取得北京時間當前日期 (YYYY-MM-DD)
+    function getBeijingDateStr() {
+      const d = new Date();
+      // 轉為北京時間 (UTC+8)
+      const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+      const bjDate = new Date(utc + (3600000 * 8));
+      
+      const yyyy = bjDate.getFullYear();
+      const mm = String(bjDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(bjDate.getDate()).padStart(2, '0');
       return `${yyyy}-${mm}-${dd}`;
+    }
+
+    // 取得北京時間當前時間字串 (HH:MM:SS)
+    function getBeijingTimeString() {
+      const d = new Date();
+      const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+      const bjDate = new Date(utc + (3600000 * 8));
+      return bjDate.toLocaleTimeString('zh-HK', { hour12: false });
     }
 
     // 依據閘口 (Gate) 計算最近轉機安檢站
@@ -224,13 +237,11 @@
       return 'E1 / E2';
     }
 
-    // 取得轉機人數的 LocalStorage key
     function getPaxStorageKey(flightKey) {
-      const dateStr = getTodayDateStr();
+      const dateStr = getBeijingDateStr();
       return `hkg_pax_${dateStr}_${flightKey}`;
     }
 
-    // 保存並鎖定轉機人數 (永久不可修改)
     function lockPaxCount(flightKey) {
       const inputEl = document.getElementById(`pax-input-${flightKey}`);
       if (!inputEl) return;
@@ -245,13 +256,16 @@
       if (confirm(`確定輸入轉機人數為 ${numVal} 人？\n確定後將永久鎖定，無法修改！`)) {
         const storageKey = getPaxStorageKey(flightKey);
         localStorage.setItem(storageKey, numVal);
-        renderTable(rawFlightData); // 重新繪製表格
+        renderTable(rawFlightData);
       }
     }
 
-    // 生成備用模擬航班數據
+    // 生成北京時間對齊的預估模擬數據 (代理失敗時備用)
     function generateFallbackFlights() {
-      const now = new Date();
+      const d = new Date();
+      const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+      const bjNow = new Date(utc + (3600000 * 8));
+
       const mockList = [];
       const origins = [
         { code: 'CX', num: '881', city: '洛杉磯 (LAX)', gate: '2' },
@@ -266,10 +280,10 @@
         { code: 'UO', num: '687', city: '大阪關西 (KIX)', gate: '18' }
       ];
 
-      const offsets = [-60, -30, 0, 30, 60, 90, 120, 150, 180, 240];
+      const offsets = [-90, -45, -10, 20, 55, 90, 130, 170, 210, 260];
 
       offsets.forEach((offset, idx) => {
-        const flightTime = new Date(now.getTime() + offset * 60000);
+        const flightTime = new Date(bjNow.getTime() + offset * 60000);
         const hh = String(flightTime.getHours()).padStart(2, '0');
         const mm = String(flightTime.getMinutes()).padStart(2, '0');
         const timeStr = `${hh}:${mm}`;
@@ -294,8 +308,9 @@
     }
 
     async function fetchArrivalData() {
-      const dateStr = getTodayDateStr();
-      const targetUrl = `https://www.hongkongairport.com/flightinfo-rest/rest/flights/past?date=${dateStr}&lang=zh_TW&arrival=true`;
+      const dateStr = getBeijingDateStr();
+      // 使用正確的即時抵港 API 路徑 (cargo=false, arrival=true)
+      const targetUrl = `https://www.hongkongairport.com/flightinfo-rest/rest/flights?date=${dateStr}&lang=zh_TW&cargo=false&arrival=true`;
       
       const proxies = [
         `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
@@ -331,12 +346,12 @@
         bannerEl.style.display = 'none';
       } else {
         rawFlightData = generateFallbackFlights();
-        bannerEl.innerText = '⚠️ 提示：由於網絡區域跨域限制，目前為您載入即時預估抵港航班模式。';
+        bannerEl.innerText = '⚠️ 提示：跨域請求受限，已為您顯示基於北京時間對齊的實時預估航班數據。';
         bannerEl.style.display = 'block';
       }
 
       renderTable(rawFlightData);
-      document.getElementById('update-time').innerText = `最後更新: ${new Date().toLocaleTimeString()}`;
+      document.getElementById('update-time').innerText = `最後更新 (北京時間): ${getBeijingTimeString()}`;
     }
 
     function renderTable(flights) {
@@ -355,7 +370,6 @@
         const gate = item.gate || '-';
         const transferStation = getNearestTransferStation(gate);
         
-        // 轉機人數狀態 (是否已鎖定)
         const storageKey = getPaxStorageKey(mainFlightKey);
         const savedPax = localStorage.getItem(storageKey);
 
