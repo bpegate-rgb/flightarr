@@ -52,54 +52,6 @@
       display: none;
     }
 
-    /* 控制面板 */
-    .filter-card {
-      background-color: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 20px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
-      align-items: center;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    }
-    
-    .filter-group { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 180px; }
-    .filter-group label { font-size: 0.82rem; color: #64748b; font-weight: 600; text-transform: uppercase; }
-    
-    .filter-group select, .filter-group input {
-      background-color: #f8fafc;
-      color: #0f172a;
-      border: 1px solid #cbd5e1;
-      padding: 10px 14px;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      outline: none;
-    }
-    .filter-group select:focus, .filter-group input:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-    }
-    
-    /* 切換按鈕 */
-    .btn-toggle {
-      background-color: #e2e8f0;
-      color: #475569;
-      border: 1px solid #cbd5e1;
-      padding: 10px 16px;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: bold;
-      transition: all 0.2s;
-    }
-    .btn-toggle.active {
-      background-color: #2563eb;
-      color: #ffffff;
-      border-color: #2563eb;
-    }
-
     /* 表格樣式 */
     .table-responsive {
       overflow-x: auto;
@@ -211,27 +163,6 @@
 
     <div id="source-banner" class="data-source-banner"></div>
 
-    <div class="filter-card">
-      <div class="filter-group" style="flex: 0 0 auto;">
-        <label>顯示範圍</label>
-        <button id="toggle-2h-btn" class="btn-toggle active" onclick="toggleTwoHourFilter()">
-          ⏱️ 僅顯示 2 小時內航班
-        </button>
-      </div>
-
-      <div class="filter-group">
-        <label for="airline-select">篩選航空公司</label>
-        <select id="airline-select" onchange="filterFlights()">
-          <option value="ALL">全部航空公司</option>
-        </select>
-      </div>
-
-      <div class="filter-group">
-        <label for="search-input">搜尋</label>
-        <input type="text" id="search-input" placeholder="航班編號 / 城市 / 閘口..." oninput="filterFlights()">
-      </div>
-    </div>
-
     <div class="table-responsive">
       <table>
         <thead>
@@ -257,7 +188,6 @@
 
   <script>
     let rawFlightData = [];
-    let onlyTwoHours = true; // 預設 2 小時篩選
 
     function getTodayDateStr() {
       const today = new Date();
@@ -315,11 +245,11 @@
       if (confirm(`確定輸入轉機人數為 ${numVal} 人？\n確定後將永久鎖定，無法修改！`)) {
         const storageKey = getPaxStorageKey(flightKey);
         localStorage.setItem(storageKey, numVal);
-        filterFlights(); // 重新繪製表格
+        renderTable(rawFlightData); // 重新繪製表格
       }
     }
 
-    // 生成備用模擬航班數據 (確保代理伺服器受阻時系統依然可用)
+    // 生成備用模擬航班數據
     function generateFallbackFlights() {
       const now = new Date();
       const mockList = [];
@@ -336,7 +266,7 @@
         { code: 'UO', num: '687', city: '大阪關西 (KIX)', gate: '18' }
       ];
 
-      const offsets = [-10, 15, 30, 45, 65, 85, 105, 125, 150, 180];
+      const offsets = [-60, -30, 0, 30, 60, 90, 120, 150, 180, 240];
 
       offsets.forEach((offset, idx) => {
         const flightTime = new Date(now.getTime() + offset * 60000);
@@ -374,13 +304,11 @@
       ];
 
       let json = null;
-      let usedProxy = false;
 
-      // 1. 嘗試直接呼叫或透過代理呼叫 API
       for (const proxyUrl of proxies) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 4000); // 4秒超時
+          const timeoutId = setTimeout(() => controller.abort(), 4000);
 
           const res = await fetch(proxyUrl, { signal: controller.signal });
           clearTimeout(timeoutId);
@@ -388,7 +316,6 @@
           if (res.ok) {
             json = await res.json();
             if (json && json[0]?.list) {
-              usedProxy = true;
               break;
             }
           }
@@ -403,93 +330,21 @@
         rawFlightData = json[0].list;
         bannerEl.style.display = 'none';
       } else {
-        // 2. 若代理全數失敗，切換至備用即時動態模擬數據，確保畫面不留白
         rawFlightData = generateFallbackFlights();
         bannerEl.innerText = '⚠️ 提示：由於網絡區域跨域限制，目前為您載入即時預估抵港航班模式。';
         bannerEl.style.display = 'block';
       }
 
-      populateAirlineFilter(rawFlightData);
-      filterFlights();
+      renderTable(rawFlightData);
       document.getElementById('update-time').innerText = `最後更新: ${new Date().toLocaleTimeString()}`;
-    }
-
-    // 檢查時間是否在 2 小時之內 (-15分鐘 ~ +120分鐘)
-    function isWithinTwoHours(timeStr, updateTimeStr) {
-      if (!timeStr && !updateTimeStr) return true;
-
-      const targetTimeStr = updateTimeStr || timeStr;
-      const parts = targetTimeStr.split(':').map(Number);
-      if (parts.length < 2) return true;
-
-      const now = new Date();
-      const flightTime = new Date();
-      flightTime.setHours(parts[0], parts[1], 0, 0);
-
-      const diffInMinutes = (flightTime - now) / (1000 * 60);
-      return diffInMinutes >= -15 && diffInMinutes <= 120;
-    }
-
-    function toggleTwoHourFilter() {
-      onlyTwoHours = !onlyTwoHours;
-      const btn = document.getElementById('toggle-2h-btn');
-      if (onlyTwoHours) {
-        btn.classList.add('active');
-        btn.innerText = '⏱️ 僅顯示 2 小時內航班';
-      } else {
-        btn.classList.remove('active');
-        btn.innerText = '顯示全天航班';
-      }
-      filterFlights();
-    }
-
-    function populateAirlineFilter(flights) {
-      const airlineSelect = document.getElementById('airline-select');
-      const selectedValue = airlineSelect.value;
-      const airlineSet = new Set();
-
-      flights.forEach(item => {
-        if (item.flight && Array.isArray(item.flight)) {
-          item.flight.forEach(f => { if (f.airline) airlineSet.add(f.airline); });
-        }
-      });
-
-      airlineSelect.innerHTML = '<option value="ALL">全部航空公司</option>';
-      Array.from(airlineSet).sort().forEach(code => {
-        const opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = `${code} 航空`;
-        airlineSelect.appendChild(opt);
-      });
-
-      airlineSelect.value = selectedValue;
-    }
-
-    function filterFlights() {
-      const selectedAirline = document.getElementById('airline-select').value;
-      const keyword = document.getElementById('search-input').value.toLowerCase().trim();
-
-      const filtered = rawFlightData.filter(item => {
-        const matchTime = !onlyTwoHours || isWithinTwoHours(item.time, item.time_update);
-        const matchAirline = (selectedAirline === 'ALL') || 
-          item.flight.some(f => f.airline === selectedAirline);
-        const flightNumbersStr = item.flight.map(f => `${f.airline}${f.number}`).join(' ').toLowerCase();
-        const originStr = item.origin ? item.origin.join(' ').toLowerCase() : '';
-        const gateStr = item.gate || '';
-        const matchKeyword = !keyword || flightNumbersStr.includes(keyword) || originStr.includes(keyword) || gateStr.includes(keyword);
-
-        return matchTime && matchAirline && matchKeyword;
-      });
-
-      renderTable(filtered);
     }
 
     function renderTable(flights) {
       const tbody = document.getElementById('flight-list');
       tbody.innerHTML = '';
 
-      if (flights.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="loading-cell">沒有找到符合條件的抵港航班。</td></tr>';
+      if (!flights || flights.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="loading-cell">沒有找到抵港航班資料。</td></tr>';
         return;
       }
 
@@ -506,10 +361,8 @@
 
         let paxCellHtml = '';
         if (savedPax !== null) {
-          // 已鎖定，無法修改
           paxCellHtml = `<span class="pax-locked-badge">🔒 ${savedPax} 人</span>`;
         } else {
-          // 未輸入，顯示輸入框與確定按鈕
           paxCellHtml = `
             <div class="pax-input-group">
               <input type="number" id="pax-input-${mainFlightKey}" class="pax-input" placeholder="人數" min="0">
